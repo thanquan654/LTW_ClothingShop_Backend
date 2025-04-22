@@ -1,0 +1,6 @@
+@BTL_ClothingShop_HostAddress = http://localhost:5200
+
+GET {{BTL_ClothingShop_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
