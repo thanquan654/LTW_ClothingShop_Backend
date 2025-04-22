@@ -34,7 +34,23 @@ namespace BTL_ClothingShop.Controllers
         {
             return ApiResponseFactory.Error("This endpoint is not implemented yet.", 500);
         }
-    }    {
-        
+
+        //  ---------------- Review --------------------
+        // GET: api/product/{productId}/reviews
+        // This endpoint is used to get a list of reviews for a specific product.
+        [HttpGet("{producId}/reviews")]
+        public IActionResult GetProductReviews([FromRoute] string productId)
+        {
+            return ApiResponseFactory.Error("This endpoint is not implemented yet.", 500);
+        }
+
+        // POST: api/product/{productId}/reviews
+        // This endpoint is used to create a new review for a specific product.
+        [HttpPost("{productId}/reviews")]
+        public IActionResult CreateProductReview([FromRoute] string productId, [FromBody] object reviewForm)
+        {
+            return ApiResponseFactory.Error("This endpoint is not implemented yet.", 500);
+        }
+
     }
 }
