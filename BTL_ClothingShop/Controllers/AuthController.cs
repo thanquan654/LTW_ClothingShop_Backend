@@ -1,85 +1,34 @@
-﻿using Microsoft.AspNetCore.Http;
+﻿using BTL_ClothingShop.Helpers;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BTL_ClothingShop.Controllers
 {
     [ApiController]
-    [Route('/api/[controller]')]
-    public class AuthController : Controller
+    [Route("/api/[controller]")]
+    public class AuthController : ControllerBase
     {
-        // GET: AuthController
-        public ActionResult Index()
+        [HttpPost("register")]
+        [AllowAnonymous]
+        public IActionResult Register([FromBody] object userRegistrationForm)
         {
-            return View();
+            return ApiResponseFactory.Error("This endpoint is not implemented yet.", 500);
         }
 
-        // GET: AuthController/Details/5
-        public ActionResult Details(int id)
+        [HttpPost("login")]
+        [AllowAnonymous]
+        public IActionResult Login([FromBody] object userLoginForm)
         {
-            return View();
+            return ApiResponseFactory.Error("This endpoint is not implemented yet.", 500);
         }
 
-        // GET: AuthController/Create
-        public ActionResult Create()
+        [HttpPost("logout")]
+        [Authorize]
+        public IActionResult Logout()
         {
-            return View();
+            return ApiResponseFactory.Error("This endpoint is not implemented yet.", 500);
         }
 
-        // POST: AuthController/Create
-        [HttpPost]
-        [ValidateAntiForgeryToken]
-        public ActionResult Create(IFormCollection collection)
-        {
-            try
-            {
-                return RedirectToAction(nameof(Index));
-            }
-            catch
-            {
-                return View();
-            }
-        }
-
-        // GET: AuthController/Edit/5
-        public ActionResult Edit(int id)
-        {
-            return View();
-        }
-
-        // POST: AuthController/Edit/5
-        [HttpPost]
-        [ValidateAntiForgeryToken]
-        public ActionResult Edit(int id, IFormCollection collection)
-        {
-            try
-            {
-                return RedirectToAction(nameof(Index));
-            }
-            catch
-            {
-                return View();
-            }
-        }
-
-        // GET: AuthController/Delete/5
-        public ActionResult Delete(int id)
-        {
-            return View();
-        }
-
-        // POST: AuthController/Delete/5
-        [HttpPost]
-        [ValidateAntiForgeryToken]
-        public ActionResult Delete(int id, IFormCollection collection)
-        {
-            try
-            {
-                return RedirectToAction(nameof(Index));
-            }
-            catch
-            {
-                return View();
-            }
-        }
     }
 }
