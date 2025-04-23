@@ -54,5 +54,4 @@ TestResult.xml
 nunit-*.xml
 
 .vs/
-appsettings.Development.json
-/BTL_ClothingShop/appsettings.Development.json
+/*/appsettings.Development.json
