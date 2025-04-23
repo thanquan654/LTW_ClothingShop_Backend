@@ -1,4 +1,5 @@
 ﻿using BTL_ClothingShop.Helpers;
+using BTL_ClothingShop.Models;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BTL_ClothingShop.Controllers
@@ -14,10 +15,13 @@ namespace BTL_ClothingShop.Controllers
     }
 
 
+
     [ApiController]
     [Route("/api/[controller]")]
     public class TestController : ControllerBase
     {
+        private readonly CsdlshopThoiTrangContext db = new CsdlshopThoiTrangContext();
+
         [HttpPost("images")]
         public async Task<IActionResult> UploadImages([FromForm] UploadImageRequest request)
         {
@@ -42,7 +46,8 @@ namespace BTL_ClothingShop.Controllers
                 // Print file path to console
                 Console.WriteLine($"File path: {filePath}");
 
-                using (var stream = System.IO.File.Create(filePath)) {
+                using (var stream = System.IO.File.Create(filePath))
+                {
                     await file.CopyToAsync(stream);
                 }
 
@@ -59,5 +64,16 @@ namespace BTL_ClothingShop.Controllers
             });
         }
 
+
+
+        // Get User
+        [HttpGet]
+        [Route("")]
+        public IActionResult TestApi()
+        {
+            var users = db.Users.ToList();
+
+            return ApiResponseFactory.Success(users, "Lấy danh sách người dùng thành công");
+        }
     }
 }
