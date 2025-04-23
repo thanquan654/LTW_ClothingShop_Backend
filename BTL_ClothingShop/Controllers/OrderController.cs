@@ -10,107 +10,98 @@ namespace BTL_ClothingShop.Controllers
     [Route("/api/[controller]")]
     public class OrderController : ControllerBase
     {
-        private readonly CsdlshopThoiTrangContext _context = new CsdlshopThoiTrangContext();
+        private readonly CsdlshopThoiTrangContext _context;
+
+        public OrderController(CsdlshopThoiTrangContext context)
+        {
+            _context = context;
+        }
 
         // POST: api/orders
         // This endpoint is used to create a new order.
         [HttpPost("")]
         public async Task<IActionResult> CreateOrder([FromBody] CreateOrderRequestDto createOrderBody)
         {
-            // --- Validation cơ bản ---
             if (!ModelState.IsValid)
             {
-                return BadRequest(ModelState); // Trả về lỗi validation nếu DTO không hợp lệ
+                return BadRequest(ModelState);
             }
 
-            // Kiểm tra User tồn tại
-            var userExists = await _context.Users.AnyAsync(u => u.MaUser == createOrderBody.MaUser);
-            if (!userExists)
+            var user = await _context.Users.FindAsync(createOrderBody.MaUser);
+            if (user == null)
             {
                 return BadRequest($"User with id '{createOrderBody.MaUser}' not found.");
             }
 
-            // --- Xử lý logic tạo đơn hàng ---
-            using var transaction = await _context.Database.BeginTransactionAsync(); // Sử dụng Transaction
+            using var transaction = await _context.Database.BeginTransactionAsync();
             try
             {
                 decimal tongTien = 0;
                 var chiTietDonHangs = new List<ChiTietDonHang>();
-                var bienTheUpdates = new List<BienTheSanPham>(); // Lưu các biến thể cần cập nhật SL
 
+                // Validate and calculate total for each item
                 foreach (var item in createOrderBody.Items)
                 {
-                    // Tìm biến thể sản phẩm và sản phẩm tương ứng để lấy giá và kiểm tra tồn kho
                     var bienThe = await _context.BienTheSanPhams
-                                                .Include(bt => bt.SanPham) // Include SanPham để lấy giá
-                                                .FirstOrDefaultAsync(bt => bt.MaBienThe == item.MaBienThe);
+                        .Include(bt => bt.MaSanPhamNavigation)
+                        .FirstOrDefaultAsync(bt => bt.MaBienThe == item.MaBienThe);
 
                     if (bienThe == null)
                     {
-                        await transaction.RollbackAsync();
                         return BadRequest($"Product variant with id '{item.MaBienThe}' not found.");
                     }
+
                     if (bienThe.SoLuongTon < item.SoLuong)
                     {
-                        await transaction.RollbackAsync();
-                        return BadRequest($"Not enough stock for product variant SKU '{bienThe.Sku}'. Available: {bienThe.SoLuongTon}, Requested: {item.SoLuong}");
+                        return BadRequest($"Insufficient stock for product variant '{item.MaBienThe}'.");
                     }
-                    if (bienThe.SanPham != null) // Kiểm tra nếu không include được SanPham
-                    {
-                        // Giảm số lượng tồn kho và tăng lượt bán
-                        bienThe.SoLuongTon -= item.SoLuong;
-                        bienThe.LuotBan += item.SoLuong;
-                        bienTheUpdates.Add(bienThe); // Thêm vào danh sách cần update
 
-                        // Tính tổng tiền (Lấy giá từ bảng SanPham)
-                        tongTien += (decimal)(bienThe.SanPham.GiaTien * item.SoLuong);
+                    var giaTien = bienThe.MaSanPhamNavigation?.GiaTien ?? 0;
+                    tongTien += giaTien * item.SoLuong;
 
-                        // Tạo chi tiết đơn hàng
-                        chiTietDonHangs.Add(new ChiTietDonHang
-                        {
-                            // maChiTietDonHang tự tăng
-                            MaBienThe = item.MaBienThe,
-                            SoLuong = item.SoLuong
-                            // maDonHang sẽ được gán sau khi DonHang được tạo
-                            // Cân nhắc thêm trường GiaLucDat vào ChiTietDonHang để lưu giá tại thời điểm mua
-                        });
-                    }
-                    else
+                    bienThe.SoLuongTon -= item.SoLuong;
+                    bienThe.LuotBan = (bienThe.LuotBan ?? 0) + item.SoLuong;
+
+                    chiTietDonHangs.Add(new ChiTietDonHang
                     {
-                        await transaction.RollbackAsync();
-                        // Ghi log lỗi ở đây
-                        return StatusCode(500, "Could not retrieve product details for variant calculation.");
-                    }
+                        MaBienThe = item.MaBienThe,
+                        SoLuong = item.SoLuong
+                    });
                 }
 
-                // Tạo đơn hàng mới
-                var newOrder = new DonHang
+                // Create new order
+                var donHang = new DonHang
                 {
-                    MaDonHang = $"DH{DateTime.Now:yyyyMMddHHmmssfff}{new Random().Next(100, 999)}", // Tạo mã đơn hàng duy nhất
+                    MaDonHang = Guid.NewGuid().ToString(),
                     MaUser = createOrderBody.MaUser,
-                    PhuongThucThanhToan = createOrderBody.PhuongThucThanhToan,
-                    TongTien = tongTien,
-                    NgayDatHang = DateTime.UtcNow, // Sử dụng UTC cho server
-                    TrangThaiDonHang = "Đang xử lý", // Trạng thái mặc định
+                    NgayDatHang = DateTime.Now,
+                    TrangThaiDonHang = "Chờ xác nhận",
                     DiaChi = createOrderBody.DiaChi,
-                    ChiTietDonHangs = chiTietDonHangs // Gán danh sách chi tiết (EF Core sẽ tự xử lý khóa ngoại)
+                    PhuongThucThanhToan = createOrderBody.PhuongThucThanhToan,
+                    ChiTietDonHangs = chiTietDonHangs
                 };
 
-                _context.DonHangs.Add(newOrder);
-                _context.BienTheSanPhams.UpdateRange(bienTheUpdates); // Cập nhật nhiều biến thể cùng lúc
+                await _context.DonHangs.AddAsync(donHang);
+                await _context.SaveChangesAsync();
+                await transaction.CommitAsync();
 
-                await _context.SaveChangesAsync(); // Lưu tất cả thay đổi (Đơn hàng, Chi tiết, Biến thể)
-                await transaction.CommitAsync(); // Hoàn tất transaction thành công
+                // Return order summary
+                var orderSummary = new OrderSummaryDto
+                {
+                    MaDonHang = donHang.MaDonHang,
+                    MaUser = donHang.MaUser ?? "",
+                    TongTien = tongTien,
+                    NgayDatHang = donHang.NgayDatHang ?? DateTime.Now,
+                    TrangThaiDonHang = donHang.TrangThaiDonHang ?? "",
+                    DiaChi = donHang.DiaChi ?? ""
+                };
 
-                
-                // Trả về mã đơn hàng
-                return CreatedAtAction(nameof(GetOrderDetails), new { orderId = newOrder.MaDonHang }, new { maDonHang = newOrder.MaDonHang });
+                return ApiResponseFactory.Success(orderSummary);
             }
             catch (Exception ex)
             {
-                await transaction.RollbackAsync(); // Hoàn tác nếu có lỗi
-                                                   // Log lỗi ex chi tiết ở đây (quan trọng!)
-                return StatusCode(500, "An error occurred while creating the order.");
+                await transaction.RollbackAsync();
+                return ApiResponseFactory.Error($"Error creating order: {ex.Message}", 500);
             }
         }
 
@@ -165,23 +156,71 @@ namespace BTL_ClothingShop.Controllers
         // GET: api/orders/{orderId}?userId=...
         // This endpoint is used to get the details of a specific order.
         [HttpGet("{orderId}")]
-        public async Task<IActionResult> GetOrderDetails([FromRoute] string orderId, [FromQuery] string? userId)
+        public async Task<IActionResult> GetOrderById(string orderId)
         {
             try
             {
-                var orderDetailDto = await GetOrderDetailsDto(orderId, userId); // Gọi hàm helper
+                var order = await _context.DonHangs
+                    .Include(d => d.MaUserNavigation)
+                    .Include(d => d.ChiTietDonHangs)
+                        .ThenInclude(ct => ct.MaBienTheNavigation)
+                            .ThenInclude(bt => bt.MaSanPhamNavigation)
+                    .Include(d => d.ChiTietDonHangs)
+                        .ThenInclude(ct => ct.MaBienTheNavigation)
+                            .ThenInclude(bt => bt.MaKichCoNavigation)
+                    .Include(d => d.ChiTietDonHangs)
+                        .ThenInclude(ct => ct.MaBienTheNavigation)
+                            .ThenInclude(bt => bt.MaMauNavigation)
+                    .FirstOrDefaultAsync(d => d.MaDonHang == orderId);
 
-                if (orderDetailDto == null)
+                if (order == null)
                 {
-                    return NotFound($"Order with id '{orderId}' not found" + (userId != null ? $" for user '{userId}'." : "."));
+                    return ApiResponseFactory.Error("Order not found", 404);
                 }
 
-                return Ok(orderDetailDto);
+                decimal tongTien = 0;
+                var orderDetail = new OrderDetailDto
+                {
+                    MaDonHang = order.MaDonHang,
+                    MaUser = order.MaUser ?? "",
+                    NgayDatHang = order.NgayDatHang ?? DateTime.Now,
+                    TrangThaiDonHang = order.TrangThaiDonHang ?? "",
+                    DiaChi = order.DiaChi ?? "",
+                    PhuongThucThanhToan = order.PhuongThucThanhToan ?? "",
+                    NguoiDat = new UserInfoDto
+                    {
+                        MaUser = order.MaUserNavigation?.MaUser ?? "",
+                        HoVaTen = order.MaUserNavigation?.HoVaTen ?? "",
+                        Email = order.MaUserNavigation?.Email ?? "",
+                        SoDienThoai = order.MaUserNavigation?.SoDienThoai ?? ""
+                    },
+                    ChiTietDonHang = order.ChiTietDonHangs.Select(ct =>
+                    {
+                        var sanPham = ct.MaBienTheNavigation?.MaSanPhamNavigation;
+                        var giaTien = sanPham?.GiaTien ?? 0;
+                        tongTien += giaTien * (ct.SoLuong ?? 0);
+
+                        return new OrderDetailItemDto
+                        {
+                            MaChiTietDonHang = ct.MaChiTietDonHang,
+                            MaBienThe = ct.MaBienThe ?? 0,
+                            SoLuong = ct.SoLuong ?? 0,
+                            Sku = ct.MaBienTheNavigation?.Sku ?? "",
+                            TenSanPham = sanPham?.TenSanPham ?? "",
+                            TenMau = ct.MaBienTheNavigation?.MaMauNavigation?.TenMau ?? "",
+                            TenKichCo = ct.MaBienTheNavigation?.MaKichCoNavigation?.TenKichCo ?? "",
+                            GiaLucDat = giaTien,
+                            AnhDaiDienSanPham = sanPham?.AnhDaiDien ?? ""
+                        };
+                    }).ToList()
+                };
+
+                orderDetail.TongTien = tongTien;
+                return ApiResponseFactory.Success(orderDetail);
             }
             catch (Exception ex)
             {
-                // Log lỗi ex
-                return StatusCode(500, "An error occurred while retrieving order details.");
+                return ApiResponseFactory.Error($"Error retrieving order: {ex.Message}", 500);
             }
         }
 

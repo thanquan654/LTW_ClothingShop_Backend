@@ -1,63 +1,94 @@
-﻿using BTL_ClothingShop.Helpers;
-using Microsoft.AspNetCore.Authorization;
+﻿// Controllers/UserController.cs
+using BTL_ClothingShop.DTOs;
+using BTL_ClothingShop.Helpers;
+using BTL_ClothingShop.Models;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace BTL_ClothingShop.Controllers
 {
     [ApiController]
-    [Route("/api/[controller]")]
+    [Route("api/[controller]")]
     public class UserController : ControllerBase
     {
+        private readonly CsdlshopThoiTrangContext _context;
 
-        [HttpGet("me")]
-        [Authorize]
-        public IActionResult GetUserProfile ()
+        public UserController(CsdlshopThoiTrangContext context)
         {
-            return ApiResponseFactory.Error("This endpoint is not implemented yet.", 500);
+            _context = context;
         }
 
-        [HttpPut("me")]
-        [Authorize]
-        public IActionResult UpdateUserProfile([FromBody] object userProfileUpdateForm)
+        [HttpGet("{userId}")]
+        public async Task<IActionResult> GetUserProfile(string userId)
         {
-            return ApiResponseFactory.Error("This endpoint is not implemented yet.", 500);
+            try
+            {
+                var user = await _context.Users.FindAsync(userId);
+                if (user == null)
+                {
+                    return ApiResponseFactory.Error("Người dùng không tồn tại", 404);
+                }
+
+                var userDto = new UserDTO
+                {
+                    Id = user.MaUser,
+                    HoVaTen = user.HoVaTen,
+                    Email = user.Email,
+                    SoDienThoai = user.SoDienThoai,
+                    VaiTro = user.VaiTro
+                };
+
+                return ApiResponseFactory.Success(userDto);
+            }
+            catch (Exception ex)
+            {
+                return ApiResponseFactory.Error("Có lỗi xảy ra khi lấy thông tin người dùng", 500);
+            }
         }
 
-
-        // Địa chỉ
-        [HttpGet("me/addresses")]
-        [Authorize]
-        public IActionResult GetUserAddresses()
+        [HttpPut("{userId}")]
+        public async Task<IActionResult> UpdateUserProfile(string userId, [FromBody] UserUpdateDTO model)
         {
-            return ApiResponseFactory.Error("This endpoint is not implemented yet.", 500);
-        }
+            try
+            {
+                var user = await _context.Users.FindAsync(userId);
+                if (user == null)
+                {
+                    return ApiResponseFactory.Error("Người dùng không tồn tại", 404);
+                }
 
-        [HttpPost("me/addresses")]
-        [Authorize]
-        public IActionResult AddUserAddress([FromBody] object addressForm)
-        {
-            return ApiResponseFactory.Error("This endpoint is not implemented yet.", 500);
-        }
+                // Kiểm tra số điện thoại tồn tại
+                if (!string.IsNullOrEmpty(model.SoDienThoai) &&
+                    model.SoDienThoai != user.SoDienThoai &&
+                    await _context.Users.AnyAsync(u => u.SoDienThoai == model.SoDienThoai))
+                {
+                    return ApiResponseFactory.Error("Số điện thoại đã được sử dụng", 400);
+                }
 
-        [HttpPut("me/addresses/{addressId}")]
-        [Authorize]
-        public IActionResult UpdateUserAddress(int addressId, [FromBody] object addressForm)
-        {
-            return ApiResponseFactory.Error("This endpoint is not implemented yet.", 500);
-        }
+                // Cập nhật thông tin
+                if (!string.IsNullOrEmpty(model.HoVaTen))
+                    user.HoVaTen = model.HoVaTen;
 
-        [HttpDelete("me/addresses/{addressId}")]
-        [Authorize]
-        public IActionResult DeleteUserAddress(int addressId)
-        {
-            return ApiResponseFactory.Error("This endpoint is not implemented yet.", 500);
-        }
+                if (!string.IsNullOrEmpty(model.SoDienThoai))
+                    user.SoDienThoai = model.SoDienThoai;
 
-        [HttpPatch("me/addresses/{addressId}/set-default")]
-        [Authorize]
-        public IActionResult SetDefaultUserAddress(int addressId)
-        {
-            return ApiResponseFactory.Error("This endpoint is not implemented yet.", 500);
+                await _context.SaveChangesAsync();
+
+                var userDto = new UserDTO
+                {
+                    Id = user.MaUser,
+                    HoVaTen = user.HoVaTen,
+                    Email = user.Email,
+                    SoDienThoai = user.SoDienThoai,
+                    VaiTro = user.VaiTro
+                };
+
+                return ApiResponseFactory.Success(userDto, "Cập nhật thông tin thành công");
+            }
+            catch (Exception ex)
+            {
+                return ApiResponseFactory.Error("Có lỗi xảy ra khi cập nhật thông tin người dùng", 500);
+            }
         }
     }
 }
