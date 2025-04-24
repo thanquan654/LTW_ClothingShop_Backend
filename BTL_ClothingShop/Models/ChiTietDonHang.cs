@@ -7,20 +7,11 @@ namespace BTL_ClothingShop.Models;
 public partial class ChiTietDonHang
 {
     public int MaChiTietDonHang { get; set; }
-
     public string? MaDonHang { get; set; }
-
-    [ForeignKey("maDonHang")]
-    public virtual DonHang DonHang { get; set; }
-
     public int? MaBienThe { get; set; }
-
-    [ForeignKey("MaBienThe")]
-    public virtual BienTheSanPham? BienTheSanPham { get; set; }
-
     public int? SoLuong { get; set; }
 
-    public virtual BienTheSanPham? MaBienTheNavigation { get; set; }
-
+    // CHỈ GIỮ LẠI 1 navigation property cho mỗi FK
     public virtual DonHang? MaDonHangNavigation { get; set; }
+    public virtual BienTheSanPham? MaBienTheNavigation { get; set; }
 }

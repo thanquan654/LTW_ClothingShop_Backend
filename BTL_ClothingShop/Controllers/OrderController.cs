@@ -1,4 +1,5 @@
-﻿using BTL_ClothingShop.DTOs;
+﻿using System.Linq;
+using BTL_ClothingShop.DTOs;
 using BTL_ClothingShop.Helpers;
 using BTL_ClothingShop.Models;
 using Microsoft.AspNetCore.Mvc;
@@ -10,27 +11,26 @@ namespace BTL_ClothingShop.Controllers
     [Route("/api/[controller]")]
     public class OrderController : ControllerBase
     {
-        private readonly CsdlshopThoiTrangContext _context;
-
-        public OrderController(CsdlshopThoiTrangContext context)
-        {
-            _context = context;
-        }
+        private readonly CsdlshopThoiTrangContext _context = new CsdlshopThoiTrangContext();
 
         // POST: api/orders
         // This endpoint is used to create a new order.
-        [HttpPost("")]
+        [HttpPost("")] // Hoặc [HttpPost("/")] nếu bạn cấu hình route base khác
         public async Task<IActionResult> CreateOrder([FromBody] CreateOrderRequestDto createOrderBody)
         {
+            // --- Validation cơ bản ---
             if (!ModelState.IsValid)
             {
-                return BadRequest(ModelState);
+                return ApiResponseFactory.Error(string.Join("; "), 400);
             }
 
-            var user = await _context.Users.FindAsync(createOrderBody.MaUser);
-            if (user == null)
+            // --- Kiểm tra User tồn tại ---
+            // Sử dụng AnyAsync hiệu quả hơn FindAsync nếu chỉ cần kiểm tra tồn tại
+            var userExists = await _context.Users.AnyAsync(u => u.MaUser == createOrderBody.MaUser);
+            if (!userExists)
             {
-                return BadRequest($"User with id '{createOrderBody.MaUser}' not found.");
+                // Sử dụng ApiResponseFactory của bạn
+                return ApiResponseFactory.Error($"User with id '{createOrderBody.MaUser}' not found.", 400); // 400 Bad Request hợp lý hơn 404 ở đây
             }
 
             using var transaction = await _context.Database.BeginTransactionAsync();
@@ -38,72 +38,113 @@ namespace BTL_ClothingShop.Controllers
             {
                 decimal tongTien = 0;
                 var chiTietDonHangs = new List<ChiTietDonHang>();
+                var bienTheUpdates = new List<BienTheSanPham>(); // List để theo dõi các biến thể cần cập nhật
 
-                // Validate and calculate total for each item
+                // --- Xử lý từng item trong đơn hàng ---
                 foreach (var item in createOrderBody.Items)
                 {
+                    // Tìm Biến Thể Sản Phẩm dựa trên MaSanPham, MaMau, MaKichCo
                     var bienThe = await _context.BienTheSanPhams
-                        .Include(bt => bt.MaSanPhamNavigation)
-                        .FirstOrDefaultAsync(bt => bt.MaBienThe == item.MaBienThe);
+                        .Include(bt => bt.MaSanPhamNavigation) // Include SanPham để lấy giá (đảm bảo tên Navigation đúng)
+                        .FirstOrDefaultAsync(bt =>
+                            bt.MaSanPham == item.MaSanPham &&
+                            bt.MaMau == item.MaMau &&
+                            bt.MaKichCo == item.MaKichCo);
 
                     if (bienThe == null)
                     {
-                        return BadRequest($"Product variant with id '{item.MaBienThe}' not found.");
+                        await transaction.RollbackAsync(); // Quan trọng: Rollback trước khi return lỗi
+                        return ApiResponseFactory.Error($"Product variant not found for Product ID: {item.MaSanPham}, Color ID: {item.MaMau}, Size ID: {item.MaKichCo}", 400);
                     }
 
+                    // Kiểm tra số lượng tồn kho
                     if (bienThe.SoLuongTon < item.SoLuong)
                     {
-                        return BadRequest($"Insufficient stock for product variant '{item.MaBienThe}'.");
+                        await transaction.RollbackAsync();
+                        return ApiResponseFactory.Error($"Insufficient stock for product variant (SKU: {bienThe.Sku ?? "N/A"}). Available: {bienThe.SoLuongTon}, Requested: {item.SoLuong}", 400);
                     }
 
-                    var giaTien = bienThe.MaSanPhamNavigation?.GiaTien ?? 0;
+                    // Kiểm tra xem có lấy được giá không
+                    if (bienThe.MaSanPhamNavigation == null)
+                    {
+                        await transaction.RollbackAsync();
+                        Console.WriteLine($"Error: Could not load SanPham navigation property for BienTheSanPham ID {bienThe.MaBienThe}"); // Log lỗi
+                        return ApiResponseFactory.Error("Could not retrieve product price information.", 500); // Lỗi server vì không load được data cần thiết
+                    }
+                    var giaTien = bienThe.MaSanPhamNavigation.GiaTien ?? 0; // Lấy giá từ SanPham
+                    if (giaTien <= 0)
+                    {
+                        // Cân nhắc xem có cho phép đặt hàng sản phẩm giá 0 hoặc âm không
+                        await transaction.RollbackAsync();
+                        Console.WriteLine($"Warning: Attempted to order product with zero or negative price. Product ID: {bienThe.MaSanPham}");
+                        return ApiResponseFactory.Error($"Product price is invalid for Product ID: {bienThe.MaSanPham}.", 400);
+                    }
+
+                    // Tính tổng tiền
                     tongTien += giaTien * item.SoLuong;
 
+                    // Cập nhật số lượng tồn và lượt bán cho biến thể
                     bienThe.SoLuongTon -= item.SoLuong;
-                    bienThe.LuotBan = (bienThe.LuotBan ?? 0) + item.SoLuong;
+                    bienThe.LuotBan = (bienThe.LuotBan ?? 0) + item.SoLuong; // Giả sử LuotBan có thể null
+                                                                             // Không cần gọi _context.Update(bienThe) vì EF Core tự động theo dõi thay đổi của đối tượng đã tải
 
+                    // Thêm vào danh sách biến thể cần cập nhật (nếu bạn muốn UpdateRange sau)
+                    // Hoặc cứ để EF Core tự theo dõi từng cái cũng được
+
+                    // Tạo đối tượng ChiTietDonHang
                     chiTietDonHangs.Add(new ChiTietDonHang
                     {
-                        MaBienThe = item.MaBienThe,
+                        // MaChiTietDonHang tự tăng
+                        MaBienThe = bienThe.MaBienThe, // Lấy MaBienThe từ biến thể tìm được
                         SoLuong = item.SoLuong
                     });
                 }
 
-                // Create new order
+                // --- Tạo đơn hàng mới ---
                 var donHang = new DonHang
                 {
-                    MaDonHang = Guid.NewGuid().ToString(),
+                    // Tạo mã đơn hàng phù hợp VARCHAR(50), ví dụ:
+                    MaDonHang = $"DH{DateTime.UtcNow:yyyyMMddHHmmssfff}{new Random().Next(100, 999)}",
                     MaUser = createOrderBody.MaUser,
-                    NgayDatHang = DateTime.Now,
-                    TrangThaiDonHang = "Chờ xác nhận",
-                    DiaChi = createOrderBody.DiaChi,
                     PhuongThucThanhToan = createOrderBody.PhuongThucThanhToan,
-                    ChiTietDonHangs = chiTietDonHangs
+                    TongTien = tongTien, // *** GÁN TỔNG TIỀN VÀO ĐƠN HÀNG ***
+                    NgayDatHang = DateTime.UtcNow, // Sử dụng UTC
+                    TrangThaiDonHang = "Chờ xác nhận", // Trạng thái ban đầu
+                    DiaChi = createOrderBody.DiaChi,
+                    ChiTietDonHangs = chiTietDonHangs // Gán danh sách chi tiết
                 };
 
-                await _context.DonHangs.AddAsync(donHang);
+                // Thêm đơn hàng vào context (bao gồm cả chi tiết)
+                await _context.DonHangs.AddAsync(donHang); // Sử dụng bảng DonHangs (hoặc tên DbSet của bạn)
+
+                // Lưu tất cả thay đổi (DonHang, ChiTietDonHang, cập nhật BienTheSanPham)
                 await _context.SaveChangesAsync();
+
+                // Commit transaction nếu mọi thứ thành công
                 await transaction.CommitAsync();
 
-                // Return order summary
+                // --- Tạo DTO trả về ---
                 var orderSummary = new OrderSummaryDto
                 {
                     MaDonHang = donHang.MaDonHang,
-                    MaUser = donHang.MaUser ?? "",
-                    TongTien = tongTien,
-                    NgayDatHang = donHang.NgayDatHang ?? DateTime.Now,
-                    TrangThaiDonHang = donHang.TrangThaiDonHang ?? "",
-                    DiaChi = donHang.DiaChi ?? ""
+                    MaUser = donHang.MaUser, // Lấy từ donHang đã lưu
+                    TongTien = (decimal)donHang.TongTien, // Lấy từ donHang đã lưu
+                    NgayDatHang = (DateTime)donHang.NgayDatHang, // Lấy từ donHang đã lưu
+                    TrangThaiDonHang = donHang.TrangThaiDonHang, // Lấy từ donHang đã lưu
+                    DiaChi = donHang.DiaChi // Lấy từ donHang đã lưu
                 };
 
-                return ApiResponseFactory.Success(orderSummary);
+                return Ok(ApiResponseFactory.Success(orderSummary)); // Giả sử Success trả về cấu trúc chuẩn
+
             }
             catch (Exception ex)
             {
                 await transaction.RollbackAsync();
-                return ApiResponseFactory.Error($"Error creating order: {ex.Message}", 500);
+                Console.WriteLine($"Error creating order: {ex.ToString()}");
+                return ApiResponseFactory.Error($"An unexpected error occurred while creating the order. {ex.Message}", 500);
             }
         }
+
 
         // GET: api/orders?userId=...
         // This endpoint is used to get a list of orders for a specific user.
@@ -131,7 +172,7 @@ namespace BTL_ClothingShop.Controllers
                     .Select(d => new OrderSummaryDto // Sử dụng DTO tóm tắt
                     {
                         MaDonHang = d.MaDonHang,
-                        MaUser = d.MaDonHang,
+                        MaUser = d.User.HoVaTen,
                         TongTien = (decimal)d.TongTien,
                         NgayDatHang = (DateTime)d.NgayDatHang,
                         TrangThaiDonHang = d.TrangThaiDonHang,
@@ -161,7 +202,7 @@ namespace BTL_ClothingShop.Controllers
             try
             {
                 var order = await _context.DonHangs
-                    .Include(d => d.MaUserNavigation)
+                    .Include(d => d.User)
                     .Include(d => d.ChiTietDonHangs)
                         .ThenInclude(ct => ct.MaBienTheNavigation)
                             .ThenInclude(bt => bt.MaSanPhamNavigation)
@@ -189,10 +230,10 @@ namespace BTL_ClothingShop.Controllers
                     PhuongThucThanhToan = order.PhuongThucThanhToan ?? "",
                     NguoiDat = new UserInfoDto
                     {
-                        MaUser = order.MaUserNavigation?.MaUser ?? "",
-                        HoVaTen = order.MaUserNavigation?.HoVaTen ?? "",
-                        Email = order.MaUserNavigation?.Email ?? "",
-                        SoDienThoai = order.MaUserNavigation?.SoDienThoai ?? ""
+                        MaUser = order.User?.MaUser ?? "",
+                        HoVaTen = order.User?.HoVaTen ?? "",
+                        Email = order.User?.Email ?? "",
+                        SoDienThoai = order.User?.SoDienThoai ?? ""
                     },
                     ChiTietDonHang = order.ChiTietDonHangs.Select(ct =>
                     {
@@ -313,12 +354,7 @@ namespace BTL_ClothingShop.Controllers
             }
 
             // --- (Tùy chọn) Validate trạng thái mới ---
-            // Ví dụ: Kiểm tra xem trạng thái mới có hợp lệ không
-            var validStatuses = new List<string> { "Đang xử lý", "Chờ xác nhận", "Đang giao hàng", "Đã giao hàng", "Hoàn thành", "Đã hủy", "Thất bại" }; // Danh sách trạng thái hợp lệ
-            if (!validStatuses.Contains(reqBody.NewStatus))
-            {
-                return BadRequest($"Invalid status value: '{reqBody.NewStatus}'.");
-            }
+            // Ví dụ: Kiểm tra xem trạng thái mới có hợp lệ không   
 
 
 
@@ -354,13 +390,13 @@ namespace BTL_ClothingShop.Controllers
                .Where(d => d.MaDonHang == orderId)
                .Include(d => d.User) // Include thông tin người dùng
                .Include(d => d.ChiTietDonHangs)
-                   .ThenInclude(cd => cd.BienTheSanPham) // Include Biến thể từ Chi tiết
-                       .ThenInclude(bt => bt.SanPham) // Include Sản phẩm từ Biến thể
+                   .ThenInclude(cd => cd.MaBienTheNavigation) // Include Biến thể từ Chi tiết
+                       .ThenInclude(bt => bt.MaSanPhamNavigation) // Include Sản phẩm từ Biến thể
                 .Include(d => d.ChiTietDonHangs)
-                   .ThenInclude(cd => cd.BienTheSanPham)
+                   .ThenInclude(cd => cd.MaBienTheNavigation)
                        .ThenInclude(bt => bt.MaMau) // Include Màu sắc từ Biến thể
                 .Include(d => d.ChiTietDonHangs)
-                   .ThenInclude(cd => cd.BienTheSanPham)
+                   .ThenInclude(cd => cd.MaBienTheNavigation)
                        .ThenInclude(bt => bt.MaKichCo) // Include Kích cỡ từ Biến thể
                .Select(d => new OrderDetailDto // Map sang DTO chi tiết
                {
@@ -386,13 +422,13 @@ namespace BTL_ClothingShop.Controllers
                        MaBienThe = (int)cd.MaBienThe,
                        SoLuong = (int)cd.SoLuong,
                        // Lấy thông tin từ các bảng liên quan (đã Include)
-                       Sku = cd.BienTheSanPham == null ? "N/A" : cd.BienTheSanPham.Sku,
-                       TenSanPham = cd.BienTheSanPham == null || cd.BienTheSanPham.SanPham == null ? "N/A" : cd.BienTheSanPham.SanPham.TenSanPham,
-                       TenMau = cd.BienTheSanPham == null || cd.BienTheSanPham.MaMau == null ? "N/A" : cd.BienTheSanPham.MaMauNavigation.TenMau,
-                       TenKichCo = cd.BienTheSanPham == null || cd.BienTheSanPham.MaKichCoNavigation == null ? "N/A" : cd.BienTheSanPham.MaKichCoNavigation.TenKichCo,
-                       AnhDaiDienSanPham = cd.BienTheSanPham == null || cd.BienTheSanPham.SanPham == null ? null : cd.BienTheSanPham.SanPham.AnhDaiDien, // Lấy ảnh đại diện
+                       Sku = cd.MaBienTheNavigation == null ? "N/A" : cd.MaBienTheNavigation.Sku,
+                       TenSanPham = cd.MaBienTheNavigation == null || cd.MaBienTheNavigation.MaSanPhamNavigation == null ? "N/A" : cd.MaBienTheNavigation.MaSanPhamNavigation.TenSanPham,
+                       TenMau = cd.MaBienTheNavigation == null || cd.MaBienTheNavigation.MaMau == null ? "N/A" : cd.MaBienTheNavigation.MaMauNavigation.TenMau,
+                       TenKichCo = cd.MaBienTheNavigation == null || cd.MaBienTheNavigation.MaKichCoNavigation == null ? "N/A" : cd.MaBienTheNavigation.MaKichCoNavigation.TenKichCo,
+                       AnhDaiDienSanPham = cd.MaBienTheNavigation == null || cd.MaBienTheNavigation.MaSanPhamNavigation == null ? null : cd.MaBienTheNavigation.MaSanPhamNavigation.AnhDaiDien, // Lấy ảnh đại diện
                                                                                                                                                          // Lấy giá từ SanPham (giá hiện tại). Nên có trường GiaLucDat trong ChiTietDonHang
-                       GiaLucDat = (decimal)(cd.BienTheSanPham == null || cd.BienTheSanPham.SanPham == null ? 0 : cd.BienTheSanPham.SanPham.GiaTien)
+                       GiaLucDat = (decimal)(cd.MaBienTheNavigation == null || cd.MaBienTheNavigation.MaSanPhamNavigation == null ? 0 : cd.MaBienTheNavigation.MaSanPhamNavigation.GiaTien)
                    }).ToList()
                })
                .FirstOrDefaultAsync();

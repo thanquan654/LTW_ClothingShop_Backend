@@ -205,7 +205,7 @@ public partial class CsdlshopThoiTrangContext : DbContext
                 .HasMaxLength(50)
                 .HasColumnName("trangThaiDonHang");
 
-            entity.HasOne(d => d.MaUserNavigation).WithMany(p => p.DonHangs)
+            entity.HasOne(d => d.User).WithMany(p => p.DonHangs)
                 .HasForeignKey(d => d.MaUser)
                 .HasConstraintName("FK__DonHang__maUser__619B8048");
         });

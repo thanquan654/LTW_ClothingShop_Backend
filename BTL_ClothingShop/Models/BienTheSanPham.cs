@@ -10,8 +10,7 @@ public partial class BienTheSanPham
 
     public int? MaSanPham { get; set; }
 
-    [ForeignKey("maSanPham")]
-    public virtual SanPham SanPham { get; set; }
+    public virtual SanPham? MaSanPhamNavigation { get; set; }
 
     public int? MaKichCo { get; set; }
 
@@ -30,6 +29,4 @@ public partial class BienTheSanPham
     public virtual KichCo? MaKichCoNavigation { get; set; }
 
     public virtual MauSac? MaMauNavigation { get; set; }
-
-    public virtual SanPham? MaSanPhamNavigation { get; set; }
 }

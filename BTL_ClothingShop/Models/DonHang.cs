@@ -11,7 +11,7 @@ public partial class DonHang
 
     public string? MaUser { get; set; }
 
-    [ForeignKey("maUser")]
+    [ForeignKey("MaUser")]
     public virtual User? User { get; set; }
 
     public string? PhuongThucThanhToan { get; set; }
@@ -25,6 +25,4 @@ public partial class DonHang
     public string? DiaChi { get; set; }
 
     public virtual ICollection<ChiTietDonHang> ChiTietDonHangs { get; set; } = new List<ChiTietDonHang>();
-
-    public virtual User? MaUserNavigation { get; set; }
 }

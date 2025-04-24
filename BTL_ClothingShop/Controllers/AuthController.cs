@@ -13,12 +13,7 @@ namespace BTL_ClothingShop.Controllers
     [Route("api/[controller]")]
     public class AuthController : ControllerBase
     {
-        private readonly CsdlshopThoiTrangContext _context;
-
-        public AuthController(CsdlshopThoiTrangContext context)
-        {
-            _context = context;
-        }
+        private readonly CsdlshopThoiTrangContext _context = new CsdlshopThoiTrangContext();
 
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] RegisterDTO model)
