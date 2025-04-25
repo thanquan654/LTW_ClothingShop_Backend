@@ -48,7 +48,9 @@ namespace BTL_ClothingShop.Controllers
                 .Select(g => new {
                     MaBienThe = g.Key,
                     SoLuongBan = g.Sum(x => x.SoLuong ?? 0),
-                    TenSanPham = g.FirstOrDefault().MaBienTheNavigation.MaSanPhamNavigation.TenSanPham
+                    TenSanPham = g.FirstOrDefault().MaBienTheNavigation.MaSanPhamNavigation.TenSanPham,
+                    TenMau = g.FirstOrDefault().MaBienTheNavigation.MaMauNavigation.TenMau,
+                    TenKichCo = g.FirstOrDefault().MaBienTheNavigation.MaKichCoNavigation.TenKichCo
                 })
                 .OrderByDescending(x => x.SoLuongBan)
                 .Take(5)
